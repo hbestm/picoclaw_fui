@@ -50,6 +50,37 @@ class PicoClawService : Service() {
         var processId: Int = -1
             private set
 
+        // 本地 HTTP/CONNECT 代理：解决 Go core 在 Android 上无法解析 DNS 的问题。
+        // core 进程通过 HTTP_PROXY/HTTPS_PROXY 环境变量使用它（见 buildEnvironment）。
+        @Volatile
+        private var localProxy: LocalProxyServer? = null
+
+        @Volatile
+        var localProxyPort: Int = -1
+            private set
+
+        @Synchronized
+        fun startLocalProxy(): Int {
+            if (localProxy == null) localProxy = LocalProxyServer()
+            return try {
+                localProxyPort = localProxy!!.start()
+                localProxyPort
+            } catch (e: Exception) {
+                Log.w(TAG, "startLocalProxy failed: ${e.message}")
+                -1
+            }
+        }
+
+        @Synchronized
+        fun stopLocalProxy() {
+            try {
+                localProxy?.stop()
+            } catch (_: Exception) {
+            }
+            localProxy = null
+            localProxyPort = -1
+        }
+
         fun start(context: Context, publicMode: Boolean = false) {
             val intent = Intent(context, PicoClawService::class.java).apply {
                 action = ACTION_START
@@ -125,6 +156,25 @@ class PicoClawService : Service() {
                 "PATH" to "/system/bin:/system/xbin",
                 "LANG" to "en_US.UTF-8",
                 "SSL_CERT_DIR" to "/system/etc/security/cacerts",
+            ) + localProxyEnv()
+
+        /**
+         * core 是 CGO_ENABLED=0 的 Go 二进制，在 Android 上无法做 DNS 解析。
+         * 通过本地代理让它的出站 HTTP(S) 请求走 App 进程的系统 DNS。
+         * 本地回环地址不走代理，避免自环。
+         */
+        private fun localProxyEnv(): Map<String, String> {
+            val p = localProxyPort
+            if (p <= 0) return emptyMap()
+            val proxyUrl = "http://127.0.0.1:$p"
+            val noProxy = "localhost,127.0.0.1,::1"
+            return mapOf(
+                "HTTP_PROXY" to proxyUrl,
+                "http_proxy" to proxyUrl,
+                "HTTPS_PROXY" to proxyUrl,
+                "https_proxy" to proxyUrl,
+                "NO_PROXY" to noProxy,
+                "no_proxy" to noProxy,
             )
         }
 
@@ -253,6 +303,8 @@ class PicoClawService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        // 先启动本地代理，再起 core 进程（core 通过环境变量使用代理）
+        startLocalProxy()
         Log.i(TAG, "Service created")
     }
 
@@ -650,6 +702,9 @@ class PicoClawService : Service() {
 
         // 清理可能残留的孤儿进程（包括 web 服务自己启动的 gateway）
         killPicoClawOrphanProcesses()
+
+        // core 已停，本地代理不再需要
+        stopLocalProxy()
 
         // 重置重启计数
         restartCount = 0
