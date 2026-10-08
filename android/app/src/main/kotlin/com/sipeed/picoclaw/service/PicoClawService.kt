@@ -157,6 +157,7 @@ class PicoClawService : Service() {
                 "LANG" to "en_US.UTF-8",
                 "SSL_CERT_DIR" to "/system/etc/security/cacerts",
             ) + localProxyEnv()
+        }
 
         /**
          * core 是 CGO_ENABLED=0 的 Go 二进制，在 Android 上无法做 DNS 解析。
