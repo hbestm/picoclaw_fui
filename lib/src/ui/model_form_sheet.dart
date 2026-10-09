@@ -235,7 +235,7 @@ class _ModelFormSheetState extends State<ModelFormSheet> {
                   labelText: tr(context, '显示名称', 'Display name'),
                   hintText: tr(context, '例如：我的 GPT', 'e.g. My GPT'),
                   border: const OutlineInputBorder(),
-                  prefixIcon: const Icon(Remix.tag_line),
+                  prefixIcon: const Icon(Remix.price_tag_line),
                 ),
                 validator: (v) => (v == null || v.trim().isEmpty)
                     ? tr(context, '必填', 'Required')
