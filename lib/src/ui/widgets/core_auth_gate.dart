@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import 'package:remixicon/remixicon.dart';
 
 import '../../core/core_api_client.dart';
+import '../../core/core_session.dart';
 import '../../core/service_manager.dart';
 import 'bilingual_text.dart';
 
@@ -32,6 +33,13 @@ class _CoreAuthGateState extends State<CoreAuthGate> {
   @override
   void initState() {
     super.initState();
+    _boot();
+  }
+
+  Future<void> _boot() async {
+    // 确保持久化的会话已载入内存，避免切 Tab 后重复登录
+    await CoreSession.load();
+    if (!mounted) return;
     _client = CoreApiClient(context.read<ServiceManager>().webUrl);
     _check();
   }

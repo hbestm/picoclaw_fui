@@ -4,6 +4,7 @@ import 'package:animations/animations.dart';
 import 'package:picoclaw_flutter_ui/src/generated/l10n/app_localizations.dart';
 import 'package:provider/provider.dart';
 import 'package:picoclaw_flutter_ui/src/core/service_manager.dart';
+import 'package:picoclaw_flutter_ui/src/core/core_session.dart';
 import 'package:picoclaw_flutter_ui/src/core/background_service.dart';
 import 'package:picoclaw_flutter_ui/src/core/app_theme.dart';
 import 'package:picoclaw_flutter_ui/src/ui/dashboard_page.dart';
@@ -57,6 +58,9 @@ void main(List<String> args) async {
 
   final service = ServiceManager();
   await service.init();
+
+  // 预加载 core dashboard 会话，避免切 Tab 后重复登录
+  await CoreSession.load();
 
   runApp(ChangeNotifierProvider.value(value: service, child: const MainApp()));
 }

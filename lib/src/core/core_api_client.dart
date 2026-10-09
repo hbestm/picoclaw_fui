@@ -2,6 +2,8 @@ import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 
+import 'core_session.dart';
+
 /// 访问 PicoClaw Web 后台 HTTP API 的客户端。
 ///
 /// Web 后台（默认 http://127.0.0.1:18800）的 /api/* 需要 dashboard
@@ -15,7 +17,8 @@ class CoreApiClient {
   String? _cookieValue;
 
   CoreApiClient(String baseUrl)
-      : baseUrl = _normalizeBase(baseUrl);
+      : baseUrl = _normalizeBase(baseUrl),
+        _cookieValue = CoreSession.cookie;
 
   /// 当前 dashboard 会话 cookie（登录后可用），用于 WebSocket 等需要
   /// Cookie 鉴权的场景。
@@ -58,6 +61,7 @@ class CoreApiClient {
       final kv = part.split(';').first.trim();
       if (kv.startsWith('$cookieName=')) {
         _cookieValue = kv.substring(cookieName.length + 1);
+        CoreSession.save(_cookieValue!);
         return;
       }
     }
@@ -66,6 +70,7 @@ class CoreApiClient {
   Never _throwForStatus(http.Response resp) {
     if (resp.statusCode == 401) {
       _cookieValue = null;
+      CoreSession.clear();
       throw CoreApiAuthException('unauthorized');
     }
     String detail = '';
