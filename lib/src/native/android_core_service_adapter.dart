@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/services.dart';
 
 import '../core/picoclaw_channel.dart';
+import '../generated/core_version.dart';
 import 'core_service_adapter.dart';
 
 class AndroidCoreServiceAdapter implements CoreServiceAdapter {
@@ -77,6 +78,13 @@ class AndroidCoreServiceAdapter implements CoreServiceAdapter {
 
   @override
   Future<String> getCoreVersion() async {
+    // The bundled core binary does not stamp its own version (reports "dev"),
+    // and parsing `picoclaw version` output would misleadingly return the Go
+    // toolchain version. Prefer the release tag recorded at fetch time.
+    final bundled = kBundledCoreVersion.trim();
+    if (bundled.isNotEmpty && bundled.toLowerCase() != 'unknown') {
+      return bundled;
+    }
     return PicoClawChannel.getCoreVersion();
   }
 

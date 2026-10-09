@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:path/path.dart' as p;
 
 import 'core_service_adapter.dart';
+import '../generated/core_version.dart';
 
 final RegExp _ansiEscapePattern = RegExp(
   r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])',
@@ -394,6 +395,12 @@ class DesktopCoreServiceAdapter implements CoreServiceAdapter {
 
   @override
   Future<String> getCoreVersion() async {
+    // Prefer the release tag recorded at fetch time over parsing the
+    // binary's own version output (see android adapter for rationale).
+    final bundled = kBundledCoreVersion.trim();
+    if (bundled.isNotEmpty && bundled.toLowerCase() != 'unknown') {
+      return bundled;
+    }
     final exe = await _resolveCoreExePath();
     if (exe == null) return 'unknown';
 

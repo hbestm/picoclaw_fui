@@ -81,6 +81,16 @@ class PicoClawChannel {
     }
   }
 
+  /// 本地 DNS 代理端口（Android）；-1 表示代理未运行
+  static Future<int> getLocalProxyPort() async {
+    try {
+      final result = await _channel.invokeMethod<int>('getLocalProxyPort');
+      return result ?? -1;
+    } catch (_) {
+      return -1;
+    }
+  }
+
   /// 获取 config.json 文件路径
   static Future<String> getConfigPath() async {
     final result = await _channel.invokeMethod<String>('getConfigPath');

@@ -206,6 +206,10 @@ class PicoClawMethodChannel(
                     val configFile = File(context.filesDir, "picoclaw/config.json")
                     result.success(configFile.absolutePath)
                 }
+                "getLocalProxyPort" -> {
+                    // 本地 DNS 代理端口；-1 表示未运行
+                    result.success(PicoClawService.localProxyPort)
+                }
                 "getHomePath" -> {
                     result.success(PicoClawService.getWorkspacePath(context))
                 }

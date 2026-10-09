@@ -7,6 +7,7 @@ import 'package:picoclaw_flutter_ui/src/generated/l10n/app_localizations.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:picoclaw_flutter_ui/src/core/app_theme.dart';
+import 'package:picoclaw_flutter_ui/src/core/picoclaw_channel.dart';
 import 'package:remixicon/remixicon.dart';
 
 const String _githubRepoUrl = 'https://github.com/sipeed/picoclaw_fui';
@@ -15,10 +16,17 @@ const String _sipeedOfficialUrl = 'https://sipeed.com';
 const String _aboutProjectName = 'PicoClaw';
 
 class AboutInfo {
-  const AboutInfo({required this.appVersion, required this.coreVersion});
+  const AboutInfo({
+    required this.appVersion,
+    required this.coreVersion,
+    this.proxyPort = -1,
+  });
 
   final String appVersion;
   final String coreVersion;
+
+  /// 本地 DNS 代理端口；-1 表示不可用或未运行（仅 Android）。
+  final int proxyPort;
 }
 
 typedef ExternalUrlLauncher = Future<bool> Function(Uri uri);
@@ -66,6 +74,7 @@ class ConfigPageState extends State<ConfigPage> with WidgetsBindingObserver {
   final _checkFocusNode = FocusNode();
   final _argsFocusNode = FocusNode();
   final _saveFocusNode = FocusNode();
+  final _languageFocusNode = FocusNode();
   final _firebaseFocusNode = FocusNode();
   final List<FocusNode> _themeFocusNodes = [];
   bool _firebaseAllowed = false;
@@ -287,7 +296,17 @@ class ConfigPageState extends State<ConfigPage> with WidgetsBindingObserver {
     final service = context.read<ServiceManager>();
     final appVersion = await service.getAppVersion();
     final coreVersion = await service.getCoreVersion();
-    return AboutInfo(appVersion: appVersion, coreVersion: coreVersion);
+    int proxyPort = -1;
+    if (Platform.isAndroid) {
+      try {
+        proxyPort = await PicoClawChannel.getLocalProxyPort();
+      } catch (_) {}
+    }
+    return AboutInfo(
+      appVersion: appVersion,
+      coreVersion: coreVersion,
+      proxyPort: proxyPort,
+    );
   }
 
   String _normalizeAboutVersion(String value, AppLocalizations l10n) {
@@ -298,28 +317,79 @@ class ConfigPageState extends State<ConfigPage> with WidgetsBindingObserver {
     return normalized;
   }
 
-  Widget _buildAboutVersionRow(
+  Widget _buildAboutInfoRow(
     BuildContext context, {
     required String label,
     required String value,
+    Widget? trailing,
   }) {
     final textTheme = Theme.of(context).textTheme;
+    final cs = Theme.of(context).colorScheme;
     return Padding(
-      padding: const EdgeInsets.only(top: 8),
+      padding: const EdgeInsets.only(bottom: 14),
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          SizedBox(
-            width: 148,
-            child: Text(
-              label,
-              style: textTheme.bodyMedium?.copyWith(
-                fontWeight: FontWeight.w600,
-              ),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  label,
+                  style: textTheme.labelMedium?.copyWith(
+                    color: cs.onSurfaceVariant,
+                    letterSpacing: 0.4,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  value,
+                  style: textTheme.bodyLarge?.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
             ),
           ),
-          Expanded(child: Text(value, style: textTheme.bodyMedium)),
+          if (trailing != null) ...[
+            const SizedBox(width: 8),
+            trailing,
+          ],
         ],
+      ),
+    );
+  }
+
+  Widget _buildProxyStatusRow(BuildContext context, int proxyPort) {
+    final cs = Theme.of(context).colorScheme;
+    final isZh = Localizations.localeOf(context).languageCode == 'zh';
+    final active = proxyPort > 0;
+    final dotColor = active ? const Color(0xFF10B981) : cs.outline;
+    return _buildAboutInfoRow(
+      context,
+      label: isZh ? '本地网络代理' : 'Local network proxy',
+      value: active
+          ? (isZh ? '运行中 · 端口 $proxyPort' : 'Running · port $proxyPort')
+          : (isZh ? '未运行' : 'Not running'),
+      trailing: Container(
+        width: 10,
+        height: 10,
+        decoration: BoxDecoration(color: dotColor, shape: BoxShape.circle),
+      ),
+    );
+  }
+
+  Future<void> _copyAboutInfo(BuildContext ctx, AboutInfo info) async {
+    final isZh = Localizations.localeOf(context).languageCode == 'zh';
+    final text =
+        'PicoClaw ${info.appVersion} / Core ${info.coreVersion}';
+    await Clipboard.setData(ClipboardData(text: text));
+    if (!ctx.mounted) return;
+    ScaffoldMessenger.of(ctx).showSnackBar(
+      SnackBar(
+        content: Text(isZh ? '已复制版本信息' : 'Version info copied'),
+        duration: const Duration(seconds: 2),
       ),
     );
   }
@@ -327,83 +397,158 @@ class ConfigPageState extends State<ConfigPage> with WidgetsBindingObserver {
   Future<void> _showAboutDialog() async {
     final l10n = AppLocalizations.of(context)!;
     final aboutInfoFuture = widget.aboutInfoLoader?.call() ?? _loadAboutInfo();
+    final isZh = Localizations.localeOf(context).languageCode == 'zh';
 
     await showDialog<void>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(l10n.about),
-        content: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 420),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                _aboutProjectName,
-                style: Theme.of(
-                  ctx,
-                ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 12),
-              Text(l10n.aboutDescription),
-              const SizedBox(height: 16),
-              FutureBuilder<AboutInfo>(
-                future: aboutInfoFuture,
-                builder: (ctx, snapshot) {
-                  if (!snapshot.hasData && !snapshot.hasError) {
-                    return const Padding(
-                      padding: EdgeInsets.symmetric(vertical: 8),
-                      child: Center(child: CircularProgressIndicator()),
-                    );
-                  }
-
-                  final info =
-                      snapshot.data ??
-                      AboutInfo(
-                        appVersion: l10n.aboutVersionUnavailable,
-                        coreVersion: l10n.aboutVersionUnavailable,
-                      );
-                  return Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+      builder: (ctx) {
+        final cs = Theme.of(ctx).colorScheme;
+        final textTheme = Theme.of(ctx).textTheme;
+        return AlertDialog(
+          title: Text(l10n.about),
+          content: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 420),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
-                      _buildAboutVersionRow(
-                        ctx,
-                        label: l10n.aboutAppVersionLabel,
-                        value: _normalizeAboutVersion(info.appVersion, l10n),
+                      Container(
+                        width: 52,
+                        height: 52,
+                        decoration: BoxDecoration(
+                          color: cs.secondary.withAlpha(28),
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        child: const Center(
+                          child: Text(
+                            '🦞',
+                            style: TextStyle(fontSize: 30),
+                          ),
+                        ),
                       ),
-                      _buildAboutVersionRow(
-                        ctx,
-                        label: l10n.aboutCoreVersionLabel,
-                        value: _normalizeAboutVersion(info.coreVersion, l10n),
+                      const SizedBox(width: 14),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              _aboutProjectName,
+                              style: textTheme.titleLarge?.copyWith(
+                                fontWeight: FontWeight.bold,
+                                letterSpacing: -0.3,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              l10n.aboutDescription,
+                              style: textTheme.bodySmall?.copyWith(
+                                color: cs.onSurfaceVariant,
+                                height: 1.45,
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                     ],
-                  );
-                },
+                  ),
+                  const SizedBox(height: 20),
+                  const Divider(height: 1),
+                  const SizedBox(height: 16),
+                  FutureBuilder<AboutInfo>(
+                    future: aboutInfoFuture,
+                    builder: (ctx, snapshot) {
+                      if (!snapshot.hasData && !snapshot.hasError) {
+                        return const Padding(
+                          padding: EdgeInsets.symmetric(vertical: 8),
+                          child: Center(child: CircularProgressIndicator()),
+                        );
+                      }
+
+                      final info =
+                          snapshot.data ??
+                          AboutInfo(
+                            appVersion: l10n.aboutVersionUnavailable,
+                            coreVersion: l10n.aboutVersionUnavailable,
+                          );
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          _buildAboutInfoRow(
+                            ctx,
+                            label: l10n.aboutAppVersionLabel,
+                            value: _normalizeAboutVersion(
+                              info.appVersion,
+                              l10n,
+                            ),
+                            trailing: IconButton(
+                              tooltip: isZh ? '复制版本信息' : 'Copy version info',
+                              icon: const Icon(Icons.copy, size: 18),
+                              onPressed: () => _copyAboutInfo(ctx, info),
+                            ),
+                          ),
+                          _buildAboutInfoRow(
+                            ctx,
+                            label: l10n.aboutCoreVersionLabel,
+                            value: _normalizeAboutVersion(
+                              info.coreVersion,
+                              l10n,
+                            ),
+                          ),
+                          if (Platform.isAndroid)
+                            _buildProxyStatusRow(ctx, info.proxyPort),
+                        ],
+                      );
+                    },
+                  ),
+                  const SizedBox(height: 4),
+                  const Divider(height: 1),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextButton.icon(
+                          onPressed: () => _launchExternalUrl(
+                            Uri.parse(_picoclawOfficialUrl),
+                          ),
+                          icon: const Icon(Icons.open_in_new, size: 16),
+                          label: Text(
+                            l10n.picoclawOfficial,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ),
+                      Expanded(
+                        child: TextButton.icon(
+                          onPressed: () => _launchExternalUrl(
+                            Uri.parse(_sipeedOfficialUrl),
+                          ),
+                          icon: const Icon(Icons.open_in_new, size: 16),
+                          label: Text(
+                            l10n.sipeedOfficial,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
               ),
-              const SizedBox(height: 16),
-              TextButton.icon(
-                autofocus: true,
-                onPressed: () =>
-                    _launchExternalUrl(Uri.parse(_picoclawOfficialUrl)),
-                icon: const Icon(Icons.open_in_new),
-                label: Text(l10n.picoclawOfficial),
-              ),
-              TextButton.icon(
-                onPressed: () =>
-                    _launchExternalUrl(Uri.parse(_sipeedOfficialUrl)),
-                icon: const Icon(Icons.open_in_new),
-                label: Text(l10n.sipeedOfficial),
-              ),
-            ],
+            ),
           ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: Text(l10n.close),
-          ),
-        ],
-      ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: Text(l10n.close),
+            ),
+          ],
+        );
+      },
     );
 
     if (mounted) {
@@ -830,9 +975,7 @@ class ConfigPageState extends State<ConfigPage> with WidgetsBindingObserver {
                         SnackBar(content: Text(local.saved)),
                       );
                     },
-                    nextFocusNode: _themeFocusNodes.isNotEmpty
-                        ? _themeFocusNodes.first
-                        : _saveFocusNode,
+                    nextFocusNode: _languageFocusNode,
                     prevFocusNode: _argsFocusNode,
                     style: ElevatedButton.styleFrom(
                       backgroundColor: cs.secondary,
@@ -864,12 +1007,12 @@ class ConfigPageState extends State<ConfigPage> with WidgetsBindingObserver {
                 builder: (_, currentLocale, _) {
                   final service = context.read<ServiceManager>();
                   return FocusableButton(
-                    focusNode: _saveFocusNode,
+                    focusNode: _languageFocusNode,
                     onPressed: () {},
-                    prevFocusNode: _argsFocusNode,
+                    prevFocusNode: _saveFocusNode,
                     nextFocusNode: _themeFocusNodes.isNotEmpty
                         ? _themeFocusNodes.first
-                        : _saveFocusNode,
+                        : _languageFocusNode,
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Theme.of(context).colorScheme.surface,
                       foregroundColor: Theme.of(context).colorScheme.onSurface,
