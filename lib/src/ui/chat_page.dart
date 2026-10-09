@@ -7,20 +7,33 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:web_socket_channel/io.dart';
-import 'package:picoclaw_flutter_ui/src/core/picoclaw_channel.dart';
+import 'package:picoclaw_flutter_ui/src/core/core_api_client.dart';
 import 'widgets/bilingual_text.dart';
+import 'widgets/core_auth_gate.dart';
 
-/// 聊天页面 - 通过 WebSocket 与 PicoClaw Gateway 的 Pico Protocol 通信
-class ChatPage extends StatefulWidget {
+/// 聊天页面 - 通过 Web 后台的 /pico/ws 代理与网关的 Pico Protocol 通信。
+/// 代理需要 dashboard 登录态（cookie），由 [CoreAuthGate] 保证；
+/// 服务端会在转发时自动注入网关 token。
+class ChatPage extends StatelessWidget {
   const ChatPage({super.key});
 
   @override
-  State<ChatPage> createState() => _ChatPageState();
+  Widget build(BuildContext context) {
+    return CoreAuthGate(
+      builder: (context, client) => _ChatView(client: client),
+    );
+  }
 }
 
-class _ChatPageState extends State<ChatPage> {
-  static const _gatewayHost = '127.0.0.1';
-  static const _gatewayPort = 18790;
+class _ChatView extends StatefulWidget {
+  final CoreApiClient client;
+  const _ChatView({required this.client});
+
+  @override
+  State<_ChatView> createState() => _ChatViewState();
+}
+
+class _ChatViewState extends State<_ChatView> {
   static const _keySessionId = 'session_id';
 
   final _messageController = TextEditingController();
@@ -33,7 +46,6 @@ class _ChatPageState extends State<ChatPage> {
   bool _isConnected = false;
   bool _isSending = false;
   late String _sessionId;
-  String _picoToken = '';
   _ChatMessage? _streamingMessage;
 
   @override
@@ -44,12 +56,9 @@ class _ChatPageState extends State<ChatPage> {
 
   Future<void> _initChat() async {
     _sessionId = await _getOrCreateSessionId();
-    try {
-      _picoToken = await PicoClawChannel.getPicoToken();
-    } catch (_) {
-      _picoToken = 'picoclaw-android-local';
-    }
-    _addMessage(_ChatMessage('正在连接 AI 助手...', _Role.assistant));
+    _addMessage(_ChatMessage(
+        tr(context, '正在连接 AI 助手...', 'Connecting to AI assistant...'),
+        _Role.assistant));
     _connectToGateway();
   }
 
@@ -65,12 +74,18 @@ class _ChatPageState extends State<ChatPage> {
 
   void _connectToGateway() {
     try {
+      // 走 Web 后台的 WebSocket 代理（18800），它会校验 dashboard cookie
+      // 并在转发给网关时自动带上 pico token。
       final uri = Uri.parse(
-        'ws://$_gatewayHost:$_gatewayPort/pico/ws?session_id=$_sessionId',
+        '${widget.client.wsBaseUrl}/pico/ws?session_id=$_sessionId',
       );
+      final cookie = widget.client.sessionCookie;
       _channel = IOWebSocketChannel.connect(
         uri,
-        headers: {'Authorization': 'Bearer $_picoToken'},
+        headers: {
+          if (cookie != null)
+            'Cookie': '${CoreApiClient.cookieName}=$cookie',
+        },
       );
 
       _subscription = _channel!.stream.listen(
@@ -81,7 +96,7 @@ class _ChatPageState extends State<ChatPage> {
               _isConnected = false;
               _isSending = false;
             });
-            _addMessage(_ChatMessage('⚠️ 连接已断开', _Role.assistant));
+            _addMessage(_ChatMessage(tr(context, '⚠️ 连接已断开', '⚠️ Connection lost'), _Role.assistant));
           }
         },
         onError: (error) {
@@ -92,7 +107,8 @@ class _ChatPageState extends State<ChatPage> {
             });
             _addMessage(
               _ChatMessage(
-                '❌ 连接失败: $error\n请确保 PicoClaw 服务正在运行。',
+                tr(context, '❌ 连接失败: $error\n请确保 PicoClaw 服务正在运行。',
+                    '❌ Connection failed: $error\nMake sure the PicoClaw service is running.'),
                 _Role.assistant,
               ),
             );
@@ -110,7 +126,7 @@ class _ChatPageState extends State<ChatPage> {
                 _messages.clear();
               });
               _addMessage(
-                _ChatMessage('你好！我是 AI 助手，有什么可以帮你的？', _Role.assistant),
+                _ChatMessage(tr(context, '你好！我是 AI 助手，有什么可以帮你的？', 'Hi! I\'m your AI assistant. How can I help?'), _Role.assistant),
               );
             }
           })
@@ -119,7 +135,7 @@ class _ChatPageState extends State<ChatPage> {
               setState(() {
                 _isConnected = false;
               });
-              _addMessage(_ChatMessage('❌ 连接失败: $e', _Role.assistant));
+              _addMessage(_ChatMessage(tr(context, '❌ 连接失败: $e', '❌ Connection failed: $e'), _Role.assistant));
             }
           });
     } catch (e) {
@@ -175,7 +191,7 @@ class _ChatPageState extends State<ChatPage> {
         case 'typing.start':
           if (!_messages.any((m) => m.isThinking)) {
             _addMessage(
-              _ChatMessage('正在思考...', _Role.assistant, isThinking: true),
+              _ChatMessage(tr(context, '正在思考...', 'Thinking...'), _Role.assistant, isThinking: true),
             );
           }
           break;
@@ -188,13 +204,13 @@ class _ChatPageState extends State<ChatPage> {
             _removeThinkingMessage();
             _isSending = false;
           });
-          _addMessage(_ChatMessage('❌ 错误: $errorMsg', _Role.assistant));
+          _addMessage(_ChatMessage(tr(context, '❌ 错误: $errorMsg', '❌ Error: $errorMsg'), _Role.assistant));
           break;
         case 'pong':
           break; // 忽略心跳
       }
     } catch (e) {
-      _addMessage(_ChatMessage('❌ 解析消息失败: $e', _Role.assistant));
+      _addMessage(_ChatMessage(tr(context, '❌ 解析消息失败: $e', '❌ Failed to parse message: $e'), _Role.assistant));
     }
   }
 
@@ -229,14 +245,14 @@ class _ChatPageState extends State<ChatPage> {
     if (!_isConnected) {
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(const SnackBar(content: Text('未连接到 AI 服务，正在重连...')));
+      ).showSnackBar(SnackBar(content: Text(tr(context, '未连接到 AI 服务，正在重连...', 'Not connected to AI service, reconnecting...'))));
       _connectToGateway();
       return;
     }
 
     _messageController.clear();
     _addMessage(_ChatMessage(text, _Role.user));
-    _addMessage(_ChatMessage('正在思考...', _Role.assistant, isThinking: true));
+    _addMessage(_ChatMessage(tr(context, '正在思考...', 'Thinking...'), _Role.assistant, isThinking: true));
     setState(() => _isSending = true);
 
     // 通过 WebSocket 发送 Pico Protocol 消息
@@ -254,7 +270,7 @@ class _ChatPageState extends State<ChatPage> {
         _removeThinkingMessage();
         _isSending = false;
       });
-      _addMessage(_ChatMessage('❌ 发送失败，请重试', _Role.assistant));
+      _addMessage(_ChatMessage(tr(context, '❌ 发送失败，请重试', '❌ Send failed, please retry'), _Role.assistant));
     }
   }
 

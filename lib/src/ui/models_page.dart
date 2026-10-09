@@ -1,113 +1,51 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:provider/provider.dart';
 import 'package:remixicon/remixicon.dart';
 
 import '../core/core_api_client.dart';
-import '../core/service_manager.dart';
 import 'model_form_sheet.dart';
 import 'widgets/bilingual_text.dart';
+import 'widgets/core_auth_gate.dart';
 
 /// 原生模型管理页：列表 / 添加 / 编辑 / 删除 / 设为默认 / 连通性测试。
-class ModelsPage extends StatefulWidget {
+class ModelsPage extends StatelessWidget {
   const ModelsPage({super.key});
 
   @override
-  State<ModelsPage> createState() => _ModelsPageState();
+  Widget build(BuildContext context) {
+    return CoreAuthGate(
+      builder: (context, client) => _ModelsView(client: client),
+    );
+  }
 }
 
-enum _Gate { loading, login, setup, ready, error }
+enum _Filter { all, available, unconfigured }
 
-class _ModelsPageState extends State<ModelsPage> {
-  CoreApiClient? _client;
-  _Gate _gate = _Gate.loading;
-  String _gateError = '';
+class _ModelsView extends StatefulWidget {
+  final CoreApiClient client;
+  const _ModelsView({required this.client});
+
+  @override
+  State<_ModelsView> createState() => _ModelsViewState();
+}
+
+class _ModelsViewState extends State<_ModelsView> {
   ModelsData? _data;
-  bool _loadingModels = false;
-
-  final _pwController = TextEditingController();
-  bool _pwObscure = true;
-  bool _authBusy = false;
+  bool _loading = false;
+  _Filter _filter = _Filter.all;
 
   @override
   void initState() {
     super.initState();
-    _init();
-  }
-
-  @override
-  void dispose() {
-    _pwController.dispose();
-    _client?.close();
-    super.dispose();
-  }
-
-  void _init() {
-    final service = context.read<ServiceManager>();
-    _client = CoreApiClient(service.webUrl);
-    _checkAuth();
-  }
-
-  Future<void> _checkAuth() async {
-    setState(() {
-      _gate = _Gate.loading;
-      _gateError = '';
-    });
-    try {
-      final st = await _client!.authStatus();
-      if (!mounted) return;
-      if (st['authenticated'] == true) {
-        setState(() => _gate = _Gate.ready);
-        _loadModels();
-      } else if (st['initialized'] == true) {
-        setState(() => _gate = _Gate.login);
-      } else {
-        setState(() => _gate = _Gate.setup);
-      }
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _gate = _Gate.error;
-        _gateError = e.toString();
-      });
-    }
-  }
-
-  Future<void> _submitPassword() async {
-    final pw = _pwController.text;
-    if (pw.isEmpty) return;
-    setState(() => _authBusy = true);
-    try {
-      if (_gate == _Gate.setup) {
-        await _client!.setupPassword(pw);
-      } else {
-        await _client!.login(pw);
-      }
-      if (!mounted) return;
-      _pwController.clear();
-      setState(() => _gate = _Gate.ready);
-      _loadModels();
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(tr(context, '验证失败：$e', 'Auth failed: $e')),
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
-    } finally {
-      if (mounted) setState(() => _authBusy = false);
-    }
+    _loadModels();
   }
 
   Future<void> _loadModels() async {
-    setState(() => _loadingModels = true);
+    setState(() => _loading = true);
     try {
-      final data = await _client!.getModels();
+      final data = await widget.client.getModels();
       if (!mounted) return;
       setState(() => _data = data);
-    } on CoreApiAuthException {
-      if (mounted) setState(() => _gate = _Gate.login);
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -117,7 +55,21 @@ class _ModelsPageState extends State<ModelsPage> {
         ),
       );
     } finally {
-      if (mounted) setState(() => _loadingModels = false);
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  List<CoreModel> get _filtered {
+    final models = _data?.models ?? [];
+    switch (_filter) {
+      case _Filter.available:
+        return models.where((m) => m.available).toList();
+      case _Filter.unconfigured:
+        return models.where((m) => !m.available).toList();
+      case _Filter.all:
+        // 可用的排前面
+        return [...models]
+          ..sort((a, b) => (b.available ? 1 : 0) - (a.available ? 1 : 0));
     }
   }
 
@@ -128,7 +80,7 @@ class _ModelsPageState extends State<ModelsPage> {
       useSafeArea: true,
       backgroundColor: Colors.transparent,
       builder: (_) => ModelFormSheet(
-        client: _client!,
+        client: widget.client,
         providers: _data?.providers ?? const [],
         existing: existing,
       ),
@@ -162,10 +114,8 @@ class _ModelsPageState extends State<ModelsPage> {
     );
     if (ok != true) return;
     try {
-      await _client!.deleteModel(m.index);
+      await widget.client.deleteModel(m.index);
       _loadModels();
-    } on CoreApiAuthException {
-      if (mounted) setState(() => _gate = _Gate.login);
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -176,18 +126,16 @@ class _ModelsPageState extends State<ModelsPage> {
 
   Future<void> _setDefault(CoreModel m) async {
     try {
-      await _client!.setDefaultModel(m.name);
+      await widget.client.setDefaultModel(m.name);
       _loadModels();
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(
-              tr(context, '已设为默认模型', 'Set as default model')),
+          content:
+              Text(tr(context, '已设为默认模型', 'Set as default model')),
           behavior: SnackBarBehavior.floating,
         ),
       );
-    } on CoreApiAuthException {
-      if (mounted) setState(() => _gate = _Gate.login);
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -206,160 +154,73 @@ class _ModelsPageState extends State<ModelsPage> {
           style: GoogleFonts.inter(fontWeight: FontWeight.w800),
         ),
         actions: [
-          if (_gate == _Gate.ready)
-            IconButton(
-              tooltip: tr(context, '刷新', 'Refresh'),
-              icon: const Icon(Remix.refresh_line),
-              onPressed: _loadingModels ? null : _loadModels,
-            ),
+          IconButton(
+            tooltip: tr(context, '刷新', 'Refresh'),
+            icon: const Icon(Remix.refresh_line),
+            onPressed: _loading ? null : _loadModels,
+          ),
         ],
       ),
-      floatingActionButton: _gate == _Gate.ready
-          ? FloatingActionButton.extended(
-              onPressed: () => _openForm(),
-              icon: const Icon(Remix.add_line),
-              label: Text(tr(context, '添加模型', 'Add model')),
-            )
-          : null,
-      body: _buildBody(colorScheme),
-    );
-  }
-
-  Widget _buildBody(ColorScheme colorScheme) {
-    switch (_gate) {
-      case _Gate.loading:
-        return const Center(child: CircularProgressIndicator());
-      case _Gate.login:
-      case _Gate.setup:
-        return _buildAuthGate(colorScheme);
-      case _Gate.error:
-        return _buildError(colorScheme);
-      case _Gate.ready:
-        return _buildList(colorScheme);
-    }
-  }
-
-  Widget _buildError(ColorScheme colorScheme) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(32),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Remix.error_warning_line,
-                size: 48, color: colorScheme.error.withAlpha(180)),
-            const SizedBox(height: 16),
-            Text(
-              tr(context, '无法连接 Core 服务', 'Cannot reach Core service'),
-              style: GoogleFonts.inter(
-                  fontSize: 16, fontWeight: FontWeight.w700),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              _gateError,
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                  color: colorScheme.onSurface.withAlpha(150), fontSize: 13),
-            ),
-            const SizedBox(height: 24),
-            FilledButton.icon(
-              onPressed: _checkAuth,
-              icon: const Icon(Remix.refresh_line),
-              label: Text(tr(context, '重试', 'Retry')),
-            ),
-          ],
-        ),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: () => _openForm(),
+        icon: const Icon(Remix.add_line),
+        label: Text(tr(context, '添加模型', 'Add model')),
+      ),
+      body: Column(
+        children: [
+          _buildFilterBar(colorScheme),
+          Expanded(child: _buildList(colorScheme)),
+        ],
       ),
     );
   }
 
-  Widget _buildAuthGate(ColorScheme colorScheme) {
-    final isSetup = _gate == _Gate.setup;
-    return Center(
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.all(32),
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 380),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                padding: const EdgeInsets.all(20),
-                decoration: BoxDecoration(
-                  color: colorScheme.secondary.withAlpha(25),
-                  shape: BoxShape.circle,
-                ),
-                child: Icon(Remix.lock_line,
-                    size: 40, color: colorScheme.secondary),
-              ),
-              const SizedBox(height: 24),
-              Text(
-                isSetup
-                    ? tr(context, '设置控制台密码', 'Set dashboard password')
-                    : tr(context, '需要验证', 'Authentication required'),
-                style: GoogleFonts.inter(
-                    fontSize: 20, fontWeight: FontWeight.w800),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                isSetup
-                    ? tr(context, '首次使用请设置控制台密码，用于保护模型配置。',
-                        'Set a dashboard password to protect model config.')
-                    : tr(context, '请输入控制台密码以管理模型。',
-                        'Enter the dashboard password to manage models.'),
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                    color: colorScheme.onSurface.withAlpha(160), fontSize: 14),
-              ),
-              const SizedBox(height: 24),
-              TextField(
-                controller: _pwController,
-                obscureText: _pwObscure,
-                autofocus: true,
-                onSubmitted: (_) => _submitPassword(),
-                decoration: InputDecoration(
-                  labelText: tr(context, '密码', 'Password'),
-                  border: const OutlineInputBorder(),
-                  prefixIcon: const Icon(Remix.key_2_line),
-                  suffixIcon: IconButton(
-                    icon: Icon(_pwObscure
-                        ? Remix.eye_off_line
-                        : Remix.eye_line),
-                    onPressed: () =>
-                        setState(() => _pwObscure = !_pwObscure),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 16),
-              SizedBox(
-                width: double.infinity,
-                height: 48,
-                child: FilledButton(
-                  onPressed: _authBusy ? null : _submitPassword,
-                  child: _authBusy
-                      ? const SizedBox(
-                          width: 20,
-                          height: 20,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : Text(isSetup
-                          ? tr(context, '设置并继续', 'Set & continue')
-                          : tr(context, '登录', 'Sign in')),
-                ),
-              ),
-            ],
-          ),
+  Widget _buildFilterBar(ColorScheme cs) {
+    final models = _data?.models ?? [];
+    final availableCount = models.where((m) => m.available).length;
+    final unconfiguredCount = models.length - availableCount;
+    Widget chip(_Filter f, String label, int count) {
+      final selected = _filter == f;
+      return ChoiceChip(
+        label: Text('$label · $count'),
+        selected: selected,
+        onSelected: (_) => setState(() => _filter = f),
+        labelStyle: TextStyle(
+          fontSize: 13,
+          fontWeight: FontWeight.w600,
+          color: selected ? cs.onSecondary : cs.onSurface.withAlpha(180),
         ),
+        selectedColor: cs.secondary,
+        backgroundColor: cs.surfaceContainerHighest.withAlpha(120),
+        side: BorderSide.none,
+        shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20)),
+      );
+    }
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
+      child: Row(
+        children: [
+          chip(_Filter.all, tr(context, '全部', 'All'), models.length),
+          const SizedBox(width: 8),
+          chip(_Filter.available, tr(context, '可用', 'Available'),
+              availableCount),
+          const SizedBox(width: 8),
+          chip(_Filter.unconfigured, tr(context, '未配置', 'Unconfigured'),
+              unconfiguredCount),
+        ],
       ),
     );
   }
 
   Widget _buildList(ColorScheme colorScheme) {
-    final models = _data?.models ?? [];
-    if (_loadingModels && models.isEmpty) {
+    final models = _filtered;
+    if (_loading && _data == null) {
       return const Center(child: CircularProgressIndicator());
     }
     if (models.isEmpty) {
+      final isFiltering = _filter != _Filter.all;
       return Center(
         child: Padding(
           padding: const EdgeInsets.all(32),
@@ -371,14 +232,18 @@ class _ModelsPageState extends State<ModelsPage> {
                   color: colorScheme.onSurface.withAlpha(100)),
               const SizedBox(height: 16),
               Text(
-                tr(context, '还没有模型', 'No models yet'),
+                isFiltering
+                    ? tr(context, '没有符合的模型', 'No matching models')
+                    : tr(context, '还没有模型', 'No models yet'),
                 style: GoogleFonts.inter(
                     fontSize: 17, fontWeight: FontWeight.w700),
               ),
               const SizedBox(height: 8),
               Text(
-                tr(context, '点击右下角按钮添加第一个模型。',
-                    'Tap the button below to add your first model.'),
+                isFiltering
+                    ? tr(context, '换个筛选条件试试。', 'Try another filter.')
+                    : tr(context, '点击右下角按钮添加第一个模型。',
+                        'Tap the button below to add your first model.'),
                 textAlign: TextAlign.center,
                 style: TextStyle(
                     color: colorScheme.onSurface.withAlpha(150)),
@@ -391,7 +256,7 @@ class _ModelsPageState extends State<ModelsPage> {
     return RefreshIndicator(
       onRefresh: _loadModels,
       child: ListView.builder(
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 96),
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 96),
         itemCount: models.length,
         itemBuilder: (_, i) => _ModelCard(
           model: models[i],
@@ -422,7 +287,9 @@ class _ModelCard extends StatelessWidget {
     final cs = Theme.of(context).colorScheme;
     final statusColor = model.available
         ? Colors.green
-        : (model.status.isNotEmpty ? Colors.orange : cs.onSurface.withAlpha(120));
+        : (model.status.isNotEmpty
+            ? Colors.orange
+            : cs.onSurface.withAlpha(120));
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
       elevation: 0,
@@ -533,15 +400,13 @@ class _ModelCard extends StatelessWidget {
                   ],
                 ),
               ],
-              if (model.status.isNotEmpty) ...[
-                const SizedBox(height: 6),
-                Text(
-                  model.available
-                      ? tr(context, '可用', 'Available')
-                      : tr(context, '状态：${model.status}', 'Status: ${model.status}'),
-                  style: TextStyle(fontSize: 12, color: statusColor),
-                ),
-              ],
+              const SizedBox(height: 6),
+              Text(
+                model.available
+                    ? tr(context, '可用', 'Available')
+                    : tr(context, '未配置', 'Unconfigured'),
+                style: TextStyle(fontSize: 12, color: statusColor),
+              ),
             ],
           ),
         ),

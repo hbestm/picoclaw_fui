@@ -17,6 +17,21 @@ class CoreApiClient {
   CoreApiClient(String baseUrl)
       : baseUrl = _normalizeBase(baseUrl);
 
+  /// 当前 dashboard 会话 cookie（登录后可用），用于 WebSocket 等需要
+  /// Cookie 鉴权的场景。
+  String? get sessionCookie => _cookieValue;
+
+  /// WebSocket 代理地址，如 ws://127.0.0.1:18800
+  String get wsBaseUrl {
+    try {
+      final u = Uri.parse(baseUrl);
+      final wsScheme = u.scheme == 'https' ? 'wss' : 'ws';
+      return u.replace(scheme: wsScheme).toString();
+    } catch (_) {
+      return baseUrl;
+    }
+  }
+
   static String _normalizeBase(String url) {
     try {
       final u = Uri.parse(url);
