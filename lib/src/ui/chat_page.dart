@@ -1,12 +1,14 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:web_socket_channel/io.dart';
 import 'package:picoclaw_flutter_ui/src/core/picoclaw_channel.dart';
+import 'widgets/bilingual_text.dart';
 
 /// 聊天页面 - 通过 WebSocket 与 PicoClaw Gateway 的 Pico Protocol 通信
 class ChatPage extends StatefulWidget {
@@ -32,6 +34,7 @@ class _ChatPageState extends State<ChatPage> {
   bool _isSending = false;
   late String _sessionId;
   String _picoToken = '';
+  _ChatMessage? _streamingMessage;
 
   @override
   void initState() {
@@ -137,17 +140,36 @@ class _ChatPageState extends State<ChatPage> {
             setState(() {
               _removeThinkingMessage();
               _isSending = false;
+              if (_streamingMessage != null) {
+                // 流式输出的最终消息：直接定稿
+                _streamingMessage!.content = content;
+                _streamingMessage!.isStreaming = false;
+                _streamingMessage = null;
+              } else {
+                _messages.add(_ChatMessage(content, _Role.assistant));
+              }
             });
-            _addMessage(_ChatMessage(content, _Role.assistant));
+            _scrollToBottom();
           }
           break;
         case 'message.update':
+          // 流式增量：更新同一条消息，而不是追加多条
           final content = payload?['content'] as String? ?? '';
           if (content.isNotEmpty) {
             setState(() {
               _removeThinkingMessage();
+              if (_streamingMessage == null) {
+                _streamingMessage = _ChatMessage(
+                  content,
+                  _Role.assistant,
+                  isStreaming: true,
+                );
+                _messages.add(_streamingMessage!);
+              } else {
+                _streamingMessage!.content = content;
+              }
             });
-            _addMessage(_ChatMessage(content, _Role.assistant));
+            _scrollToBottom();
           }
           break;
         case 'typing.start':
@@ -185,6 +207,10 @@ class _ChatPageState extends State<ChatPage> {
     setState(() {
       _messages.add(message);
     });
+    _scrollToBottom();
+  }
+
+  void _scrollToBottom() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_scrollController.hasClients) {
         _scrollController.animateTo(
@@ -239,6 +265,7 @@ class _ChatPageState extends State<ChatPage> {
 
     setState(() {
       _messages.clear();
+      _streamingMessage = null;
       _isSending = false;
     });
 
@@ -257,6 +284,50 @@ class _ChatPageState extends State<ChatPage> {
     super.dispose();
   }
 
+  Widget _buildEmptyState(ColorScheme colorScheme) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(24),
+              decoration: BoxDecoration(
+                color: colorScheme.secondary.withAlpha(25),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(
+                Icons.smart_toy_outlined,
+                size: 48,
+                color: colorScheme.secondary,
+              ),
+            ),
+            const SizedBox(height: 20),
+            Text(
+              tr(context, '开始对话', 'Start chatting'),
+              style: GoogleFonts.inter(
+                  fontSize: 20, fontWeight: FontWeight.w800),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              _isConnected
+                  ? tr(context, '在下方输入框中向 AI 提问',
+                      'Ask the AI anything below')
+                  : tr(context, '正在连接网关…请确保服务已启动',
+                      'Connecting to gateway… make sure the service is running'),
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: colorScheme.onSurface.withAlpha(140),
+                fontSize: 14,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
@@ -264,13 +335,15 @@ class _ChatPageState extends State<ChatPage> {
     return Scaffold(
       appBar: AppBar(
         title: Text(
-          'AI Chat',
+          tr(context, '对话', 'Chat'),
           style: GoogleFonts.inter(fontWeight: FontWeight.w700),
         ),
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
-          onPressed: () => Navigator.of(context).pop(),
-        ),
+        leading: Navigator.canPop(context)
+            ? IconButton(
+                icon: const Icon(Icons.arrow_back),
+                onPressed: () => Navigator.of(context).pop(),
+              )
+            : null,
         actions: [
           // 连接状态指示
           Container(
@@ -293,7 +366,9 @@ class _ChatPageState extends State<ChatPage> {
                 ),
                 const SizedBox(width: 4),
                 Text(
-                  _isConnected ? '已连接' : '未连接',
+                  _isConnected
+                      ? tr(context, '已连接', 'Connected')
+                      : tr(context, '未连接', 'Offline'),
                   style: TextStyle(
                     fontSize: 11,
                     color: _isConnected ? Colors.green : Colors.red,
@@ -304,7 +379,7 @@ class _ChatPageState extends State<ChatPage> {
           ),
           IconButton(
             icon: const Icon(Icons.delete_outline),
-            tooltip: '清空对话',
+            tooltip: tr(context, '清空对话', 'Clear chat'),
             onPressed: _clearChat,
           ),
         ],
@@ -313,15 +388,20 @@ class _ChatPageState extends State<ChatPage> {
         children: [
           // 消息列表
           Expanded(
-            child: ListView.builder(
-              controller: _scrollController,
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              itemCount: _messages.length,
-              itemBuilder: (context, index) {
-                final message = _messages[index];
-                return _MessageBubble(message: message);
-              },
-            ),
+            child: _messages.isEmpty
+                ? _buildEmptyState(colorScheme)
+                : SelectionArea(
+                    child: ListView.builder(
+                      controller: _scrollController,
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 16, vertical: 8),
+                      itemCount: _messages.length,
+                      itemBuilder: (context, index) {
+                        final message = _messages[index];
+                        return _MessageBubble(message: message);
+                      },
+                    ),
+                  ),
           ),
           // 输入区域
           Container(
@@ -341,7 +421,7 @@ class _ChatPageState extends State<ChatPage> {
                     child: TextField(
                       controller: _messageController,
                       decoration: InputDecoration(
-                        hintText: '输入消息...',
+                        hintText: tr(context, '输入消息...', 'Type a message...'),
                         border: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(24),
                           borderSide: BorderSide.none,
@@ -392,11 +472,13 @@ class _ChatPageState extends State<ChatPage> {
 enum _Role { user, assistant }
 
 class _ChatMessage {
-  final String content;
+  String content;
   final _Role role;
   final bool isThinking;
+  bool isStreaming;
 
-  _ChatMessage(this.content, this.role, {this.isThinking = false});
+  _ChatMessage(this.content, this.role,
+      {this.isThinking = false, this.isStreaming = false});
 }
 
 // --- 消息气泡组件 ---
@@ -467,13 +549,39 @@ class _MessageBubble extends StatelessWidget {
                         ),
                       ],
                     )
-                  : SelectableText(
-                      message.content,
-                      style: TextStyle(
-                        color: colorScheme.onSurface,
-                        height: 1.4,
-                      ),
-                    ),
+                  : isUser
+                      ? Text(
+                          message.content,
+                          style: TextStyle(
+                            color: colorScheme.onSurface,
+                            height: 1.4,
+                          ),
+                        )
+                      : MarkdownBody(
+                          data: message.content,
+                          selectable: false,
+                          styleSheet: MarkdownStyleSheet.fromTheme(
+                            Theme.of(context),
+                          ).copyWith(
+                            p: TextStyle(
+                              color: colorScheme.onSurface,
+                              height: 1.45,
+                              fontSize: 14.5,
+                            ),
+                            code: TextStyle(
+                              color: colorScheme.secondary,
+                              backgroundColor:
+                                  colorScheme.secondary.withAlpha(25),
+                              fontFamily: 'monospace',
+                              fontSize: 13,
+                            ),
+                            codeblockDecoration: BoxDecoration(
+                              color: colorScheme.surfaceContainerHighest
+                                  .withAlpha(140),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                          ),
+                        ),
             ),
           ),
           if (isUser) ...[

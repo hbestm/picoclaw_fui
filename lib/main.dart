@@ -9,7 +9,9 @@ import 'package:picoclaw_flutter_ui/src/core/app_theme.dart';
 import 'package:picoclaw_flutter_ui/src/ui/dashboard_page.dart';
 import 'package:picoclaw_flutter_ui/src/ui/config_page.dart';
 import 'package:picoclaw_flutter_ui/src/ui/webview_page.dart';
-import 'package:picoclaw_flutter_ui/src/ui/log_page.dart';
+import 'package:picoclaw_flutter_ui/src/ui/chat_page.dart';
+import 'package:picoclaw_flutter_ui/src/ui/models_page.dart';
+import 'package:picoclaw_flutter_ui/src/ui/widgets/bilingual_text.dart';
 import 'package:tray_manager/tray_manager.dart';
 import 'package:window_manager/window_manager.dart';
 import 'package:windows_single_instance/windows_single_instance.dart';
@@ -108,7 +110,7 @@ class _MainShellState extends State<MainShell>
   }
 
   void _onNavTap(int index) async {
-    if (_selectedIndex == 3 && index != 3 && _configIsDirty) {
+    if (_selectedIndex == 4 && index != 4 && _configIsDirty) {
       final l10n = AppLocalizations.of(context)!;
       final result = await showDialog<bool>(
         context: context,
@@ -248,20 +250,27 @@ class _MainShellState extends State<MainShell>
       ),
       _buildNavButton(
         index: 1,
+        tooltip: 'Chat',
+        icon: Icons.chat_bubble_outline,
+        selectedIcon: Icons.chat_bubble,
+        colorScheme: colorScheme,
+      ),
+      _buildNavButton(
+        index: 2,
+        tooltip: 'Models',
+        icon: Icons.psychology_outlined,
+        selectedIcon: Icons.psychology,
+        colorScheme: colorScheme,
+      ),
+      _buildNavButton(
+        index: 3,
         tooltip: 'Web',
         icon: Icons.language_outlined,
         selectedIcon: Icons.language,
         colorScheme: colorScheme,
       ),
       _buildNavButton(
-        index: 2,
-        tooltip: 'Logs',
-        icon: Icons.article_outlined,
-        selectedIcon: Icons.article,
-        colorScheme: colorScheme,
-      ),
-      _buildNavButton(
-        index: 3,
+        index: 4,
         tooltip: 'Settings',
         icon: Icons.settings_outlined,
         selectedIcon: Icons.settings,
@@ -284,14 +293,27 @@ class _MainShellState extends State<MainShell>
             key: ValueKey<int>(_selectedIndex),
             index: _selectedIndex,
             children: [
-              const DashboardPage(),
+              DashboardPage(onGoToModels: () => _onNavTap(2)),
+              Consumer<ServiceManager>(
+                builder: (context, service, _) =>
+                    service.status == ServiceStatus.running
+                        ? const ChatPage()
+                        : _ServiceNotStarted(
+                            onGoToDashboard: () => _onNavTap(0)),
+              ),
+              Consumer<ServiceManager>(
+                builder: (context, service, _) =>
+                    service.status == ServiceStatus.running
+                        ? const ModelsPage()
+                        : _ServiceNotStarted(
+                            onGoToDashboard: () => _onNavTap(0)),
+              ),
               Consumer<ServiceManager>(
                 builder: (context, service, _) => WebViewPage(
                   url: service.webUrl,
                   onGoToDashboard: () => _onNavTap(0),
                 ),
               ),
-              const LogPage(),
               ConfigPage(
                 onDirtyChanged: _onConfigDirtyChanged,
                 onSaveFnReady: _onSaveFnReady,
@@ -359,7 +381,6 @@ class _MainShellState extends State<MainShell>
     windowManager.show();
     windowManager.focus();
   }
-
   @override
   void onTrayIconRightMouseDown() {
     trayManager.popUpContextMenu();
@@ -385,5 +406,55 @@ class _MainShellState extends State<MainShell>
       } catch (_) {}
     }
     super.dispose();
+  }
+}
+
+/// 服务未启动时的占位页（聊天 / 模型 Tab 共用）。
+class _ServiceNotStarted extends StatelessWidget {
+  final VoidCallback onGoToDashboard;
+  const _ServiceNotStarted({required this.onGoToDashboard});
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                color: cs.secondary.withAlpha(25),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(Icons.power_settings_new,
+                  size: 40, color: cs.secondary),
+            ),
+            const SizedBox(height: 20),
+            Text(
+              tr(context, '服务未启动', 'Service not running'),
+              style: const TextStyle(
+                  fontSize: 18, fontWeight: FontWeight.w800),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              tr(context, '请先在状态页启动 PicoClaw 服务。',
+                  'Start the PicoClaw service from the Status tab first.'),
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                  color: cs.onSurface.withAlpha(140), fontSize: 14),
+            ),
+            const SizedBox(height: 24),
+            FilledButton.icon(
+              onPressed: onGoToDashboard,
+              icon: const Icon(Icons.dashboard_outlined),
+              label: Text(tr(context, '前往状态页', 'Go to Status')),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }

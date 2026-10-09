@@ -7,9 +7,12 @@ import 'package:picoclaw_flutter_ui/src/generated/l10n/app_localizations.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:remixicon/remixicon.dart';
 import 'package:picoclaw_flutter_ui/src/ui/widgets/tv_focusable.dart';
+import 'package:picoclaw_flutter_ui/src/ui/log_page.dart';
+import 'package:picoclaw_flutter_ui/src/ui/widgets/bilingual_text.dart';
 
 class DashboardPage extends StatefulWidget {
-  const DashboardPage({super.key});
+  final VoidCallback? onGoToModels;
+  const DashboardPage({super.key, this.onGoToModels});
 
   @override
   State<DashboardPage> createState() => _DashboardPageState();
@@ -148,6 +151,32 @@ class _DashboardPageState extends State<DashboardPage> {
                               ],
                             ),
                           ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                // 快捷入口：日志 / 模型
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 24.0),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: _QuickAction(
+                          icon: Remix.article_line,
+                          label: l10n.logs,
+                          onTap: () => Navigator.of(context).push(
+                            MaterialPageRoute(
+                                builder: (_) => const LogPage()),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: _QuickAction(
+                          icon: Remix.cpu_line,
+                          label: tr(context, '模型', 'Models'),
+                          onTap: () => widget.onGoToModels?.call(),
                         ),
                       ),
                     ],
@@ -517,6 +546,53 @@ class _DashboardPageState extends State<DashboardPage> {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// 首页快捷入口卡片。
+class _QuickAction extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+
+  const _QuickAction({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return TVFocusable(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(16),
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 12),
+        decoration: BoxDecoration(
+          color: cs.surfaceContainerHighest.withAlpha(120),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: cs.outlineVariant.withAlpha(100)),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(icon, size: 20, color: cs.secondary),
+            const SizedBox(width: 8),
+            Text(
+              label,
+              style: GoogleFonts.inter(
+                fontSize: 14,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(width: 4),
+            Icon(Icons.chevron_right,
+                size: 18, color: cs.onSurface.withAlpha(120)),
+          ],
+        ),
       ),
     );
   }
