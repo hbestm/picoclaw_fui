@@ -294,7 +294,9 @@ class _MainShellState extends State<MainShell>
             );
           },
           child: IndexedStack(
-            key: ValueKey<int>(_selectedIndex),
+            // 注意：这里不能用跟随 tab 变化的 key，否则每次切换 tab
+            // 都会销毁重建所有页面状态（聊天记录、登录态、webview 等）。
+            key: const ValueKey('main-tabs'),
             index: _selectedIndex,
             children: [
               DashboardPage(onGoToModels: () => _onNavTap(2)),

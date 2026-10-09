@@ -35,6 +35,8 @@ class _ChatView extends StatefulWidget {
 
 class _ChatViewState extends State<_ChatView> {
   static const _keySessionId = 'session_id';
+  static const _keyHistory = 'chat_history_v1';
+  static const _maxHistory = 100;
 
   final _messageController = TextEditingController();
   final _scrollController = ScrollController();
@@ -56,10 +58,65 @@ class _ChatViewState extends State<_ChatView> {
 
   Future<void> _initChat() async {
     _sessionId = await _getOrCreateSessionId();
-    _addMessage(_ChatMessage(
-        tr(context, '正在连接 AI 助手...', 'Connecting to AI assistant...'),
-        _Role.assistant));
-    _connectToGateway();
+    final restored = await _loadHistory();
+    if (!mounted) return;
+    if (restored) {
+      // 有历史记录：直接重连，不刷欢迎语
+      _connectToGateway();
+    } else {
+      _addMessage(
+          _ChatMessage(
+              tr(context, '正在连接 AI 助手...', 'Connecting to AI assistant...'),
+              _Role.assistant),
+          transient: true);
+      _connectToGateway();
+    }
+  }
+
+  /// 从本地恢复历史消息，返回是否有历史。
+  Future<bool> _loadHistory() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(_keyHistory);
+      if (raw == null || raw.isEmpty) return false;
+      final list = jsonDecode(raw) as List;
+      final msgs = <_ChatMessage>[];
+      for (final e in list) {
+        if (e is Map) {
+          final content = (e['c'] ?? '').toString();
+          if (content.isEmpty) continue;
+          msgs.add(_ChatMessage(
+            content,
+            e['r'] == 'u' ? _Role.user : _Role.assistant,
+          ));
+        }
+      }
+      if (msgs.isEmpty) return false;
+      setState(() => _messages.addAll(msgs));
+      _scrollToBottom();
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// 持久化历史消息（不含"思考中"等临时消息）。
+  Future<void> _persistMessages() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final list = _messages
+          .where((m) => !m.isThinking && m.content.isNotEmpty)
+          .toList();
+      final trimmed =
+          list.length > _maxHistory ? list.sublist(list.length - _maxHistory) : list;
+      await prefs.setString(
+        _keyHistory,
+        jsonEncode([
+          for (final m in trimmed)
+            {'c': m.content, 'r': m.role == _Role.user ? 'u' : 'a'}
+        ]),
+      );
+    } catch (_) {}
   }
 
   Future<String> _getOrCreateSessionId() async {
@@ -166,6 +223,7 @@ class _ChatViewState extends State<_ChatView> {
               }
             });
             _scrollToBottom();
+            _persistMessages();
           }
           break;
         case 'message.update':
@@ -218,12 +276,13 @@ class _ChatViewState extends State<_ChatView> {
     _messages.removeWhere((m) => m.isThinking);
   }
 
-  void _addMessage(_ChatMessage message) {
+  void _addMessage(_ChatMessage message, {bool transient = false}) {
     if (!mounted) return;
     setState(() {
       _messages.add(message);
     });
     _scrollToBottom();
+    if (!transient && !message.isThinking) _persistMessages();
   }
 
   void _scrollToBottom() {
@@ -278,6 +337,7 @@ class _ChatViewState extends State<_ChatView> {
     final prefs = await SharedPreferences.getInstance();
     _sessionId = _uuid.v4();
     await prefs.setString(_keySessionId, _sessionId);
+    await prefs.remove(_keyHistory);
 
     setState(() {
       _messages.clear();
@@ -287,7 +347,11 @@ class _ChatViewState extends State<_ChatView> {
 
     _subscription?.cancel();
     _channel?.sink.close();
-    _addMessage(_ChatMessage('正在开始新对话...', _Role.assistant));
+    _addMessage(
+        _ChatMessage(
+            tr(context, '正在开始新对话...', 'Starting a new conversation...'),
+            _Role.assistant),
+        transient: true);
     _connectToGateway();
   }
 
